@@ -1,15 +1,42 @@
 // 用一个全局变量存储被注册的副作用函数
 let activeEffect
-const bucket = new WeakMap()
-function effect(fn) {
+const effectStack = []
+
+const jobQueue = new Set()
+const p = Promise.resolve()
+// 一个标志代表是否正在刷新队列
+let isFlushing = false
+
+function flushJob() {
+  // 如果队列正在刷新，则什么都不做
+  if (isFlushing) return
+  // 设置为 true，代表正在刷新
+  isFlushing = true
+  // 在微任务队列中刷新 jobQueue 队列
+  p.then(() => {
+    console.log('jobQueue', jobQueue)
+    jobQueue.forEach(job => job())
+  }).finally(() => {
+    // 结束后重置 isFlushing
+    isFlushing = false
+  })
+}
+
+const bucket = new WeakMap() 
+
+function effect(fn, options = {}) {
   const effectFn = () => {
     // 当 effectFn 执行时，将其设置为当前激活的副作用函数
     activeEffect = effectFn
     clearEffect(effectFn)
+    effectStack.push(effectFn)
     fn()
+    effectStack.pop()
+    activeEffect = effectStack[effectStack.length - 1]
   }
 // activeEffect.deps 用来存储所有与该副作用函数相关联的依赖集合
   effectFn.deps = []
+  effectFn.options = options
   // 执行副作用函数
   effectFn()
 }
@@ -41,10 +68,22 @@ function trigger(target, key) {
   const depsMap = bucket.get(target)
   if (!depsMap) return
   const effects = depsMap.get(key)
-  const effectsToRun = new Set(effects)
-  effectsToRun.forEach(fn => fn())
+  const effectsToRun = new Set()
+  effects && effects.forEach(fn => {
+    if ( fn!== activeEffect) {
+      effectsToRun.add(fn)
+    }
+  })
+  effectsToRun.forEach(fn => {
+    if (fn.options.scheduler) {
+      fn.options.scheduler(fn)
+    } else {
+      fn()
+    }
+  })
 }
-const data = { foo: true, bar: true }
+
+const data = { foo: 1, bar: true }
 const obj = new Proxy(data, {
   // 拦截读取操作
   get(target, key) {
@@ -61,23 +100,24 @@ const obj = new Proxy(data, {
     trigger(target, key)
   }
 })
-// 全局变量
-let temp1, temp2
-// effectFn1 嵌套了 effectFn2
 effect(function effectFn1() {
-  console.log('effectFn1 执行')
-  effect(function effectFn2() {
-    console.log('effectFn2 执行')
-    // 在 effectFn2 中读取 obj.bar 属性
-    temp2 = obj.bar
-  })
-  // 在 effectFn1 中读取 obj.foo 属性
-  temp1 = obj.foo
+  console.log(obj.foo)
+}, {
+  scheduler(fn) {
+    // 每次调度时，将副作用函数添加到 jobQueue 队列中
+    jobQueue.add(fn)
+    // 调用 flushJob 刷新队列
+    flushJob()
+  }
 })
 
-setTimeout(() => {
-  obj.foo = 1
-  // setTimeout(() => {
-  //   obj.bar = 2
-  // }, 1000)
-}, 1000)
+obj.foo = obj.foo + 1
+
+obj.foo = obj.foo + 1
+
+// setTimeout(() => {
+//   obj.foo = 1
+//   // setTimeout(() => {
+//   //   obj.bar = 2
+//   // }, 1000)
+// }, 1000)
