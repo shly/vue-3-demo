@@ -30,15 +30,19 @@ function effect(fn, options = {}) {
     activeEffect = effectFn
     clearEffect(effectFn)
     effectStack.push(effectFn)
-    fn()
+    const res = fn()
     effectStack.pop()
     activeEffect = effectStack[effectStack.length - 1]
+    return res
   }
 // activeEffect.deps 用来存储所有与该副作用函数相关联的依赖集合
   effectFn.deps = []
   effectFn.options = options
   // 执行副作用函数
-  effectFn()
+  if (!options.lazy) {
+    effectFn()
+  }
+  return effectFn
 }
 function clearEffect(effectFn) {
   effectFn.deps.forEach(set => {
@@ -83,7 +87,7 @@ function trigger(target, key) {
   })
 }
 
-const data = { foo: 1, bar: true }
+const data = { foo: 1, bar: 1 }
 const obj = new Proxy(data, {
   // 拦截读取操作
   get(target, key) {
@@ -100,24 +104,33 @@ const obj = new Proxy(data, {
     trigger(target, key)
   }
 })
-effect(function effectFn1() {
-  console.log(obj.foo)
-}, {
-  scheduler(fn) {
-    // 每次调度时，将副作用函数添加到 jobQueue 队列中
-    jobQueue.add(fn)
-    // 调用 flushJob 刷新队列
-    flushJob()
+
+
+function computed(getter) {
+  let dirty = true
+  // 把 getter 作为副作用函数，创建一个 lazy 的 effect
+  const effectFn = effect(getter, {
+    lazy: true,
+    scheduler() {
+      // 只有trigger里面才会执行
+      dirty = true
+    }
+  })
+  const obj = {
+    // 当读取 value 时才执行 effectFn
+    get value() {
+      if(dirty) {
+        value = effectFn()
+        dirty = false
+      }
+      return value
+    }
   }
+  return obj
+}
+
+const sumRes = computed(() => obj.foo + obj.bar)
+effect(function effectFn1() {
+  console.log(sumRes.value)
 })
-
-obj.foo = obj.foo + 1
-
-obj.foo = obj.foo + 1
-
-// setTimeout(() => {
-//   obj.foo = 1
-//   // setTimeout(() => {
-//   //   obj.bar = 2
-//   // }, 1000)
-// }, 1000)
+obj.foo++
