@@ -112,8 +112,8 @@ function computed(getter) {
   const effectFn = effect(getter, {
     lazy: true,
     scheduler() {
-      // 只有trigger里面才会执行
       dirty = true
+      trigger(obj, 'value')
     }
   })
   const obj = {
@@ -123,6 +123,7 @@ function computed(getter) {
         value = effectFn()
         dirty = false
       }
+      track(obj, 'value')
       return value
     }
   }
